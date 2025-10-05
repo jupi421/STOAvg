@@ -52,6 +52,7 @@ def tanh(x, a, b, c, xi):
 
 def fit_frames(
     OP_frames_path,
+    Pol_frames_path,
     frame_indices=None,          # if given, ignores start/stop/step
     start=200,                   # inclusive
     stop=None,                   # exclusive (required if frame_indices is None)
@@ -64,6 +65,7 @@ def fit_frames(
     plot_initial_guess=True
 ):
     OP_frames_path = Path(OP_frames_path)
+    Pol_frames_path = Path(Pol_frames_path)
 
     # derive frame list
     if frame_indices is None:
@@ -89,9 +91,10 @@ def fit_frames(
     frames = []
 
     for i in tqdm(frame_indices, desc="Fitting"):
-        fpath = OP_frames_path / f"op{i}.out"
-        if not fpath.exists():
-            msg = f"missing file: {fpath}"
+        fpath_op = OP_frames_path / f"op{i}.out"
+        fpath_pol = Pol_frames_path / f"pol{i}.out"
+        if not fpath_op.exists() or not fpath_pol.exists():
+            msg = f"directories could not be located"
             row = [i, None, None, None, None, None, False, msg]
             if writer: writer.writerow(row)
             results.append({
@@ -100,9 +103,10 @@ def fit_frames(
             })
             continue
 
-        data = np.loadtxt(fpath)
-        x = data[:, 0]
-        y = data[:, 3]
+        data_op = np.loadtxt(fpath_op)
+        data_pol = np.loadtxt(fpath_pol)
+        x = data_op[:, 0]
+        y = data_op[:, 3]
 
         idx = np.argsort(x)
         x, y = x[idx], y[idx]
@@ -114,7 +118,7 @@ def fit_frames(
 
         # build frames
         res = root(lambda x: tanh(x, *opt), 150)
-        frame = Frame(res.x[0], opt, data[:, 0], data[:, 1:4], data[:, 4:])
+        frame = Frame(res.x[0], opt, data_op[:, 0], data_op[:, 1:4], data_pol[:, 1:4])
         frames.append(frame)
 
         if plot and save_dir is not None:
@@ -165,11 +169,9 @@ def block_avg(frames, num_blocks : int, window_size : float, save_dir="./res/blo
     for block_start in tqdm(range(0, len(frames), block_size), desc="Processing Block:"):
         cur_frame = _get_windowed_data(frames[block_start], window_size)
         block = BlockAvg(cur_frame.x_data, cur_frame.OP, cur_frame.Pol) 
-        print(block)
 
         for block_frame in range(block_start+1, block_start+block_size):
             cur_frame = _get_windowed_data(frames[block_frame], window_size)
-            print(cur_frame)
             block += cur_frame
 
         block /= block_size
@@ -188,12 +190,13 @@ def block_avg(frames, num_blocks : int, window_size : float, save_dir="./res/blo
 
 def main():
     frames, _ = fit_frames(
-        OP_frames_path="../STOTools/example/OP/OP_T20_p80",
+        OP_frames_path="../STOTools/example/OP/OP_T20_p80/",
+        Pol_frames_path="../STOTools/example/POL/POL_T20_p80/",
         start=8801, stop=9101,
         plot=True
     )
 
-    block = block_avg(frames, 20, 150)
+    #block = block_avg(frames, 20, 110.5)
 
 if __name__ == "__main__":
     main()
