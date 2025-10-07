@@ -129,10 +129,8 @@ def fit_frames(
 
         data_op = np.loadtxt(fpath_op)
         data_pol = np.loadtxt(fpath_pol)
-        data_op = data_op[window:-window, :]
-        data_pol = data_pol[window:-window, :]
-        x = data_op[:, 0]
-        y = data_op[:, 3]
+        x = data_op[window:-window, 0]
+        y = data_op[window:-window, 3]
 
         idx = np.argsort(x)
         x, y = x[idx], y[idx]
