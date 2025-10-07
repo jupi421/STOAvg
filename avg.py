@@ -11,19 +11,42 @@ from dataclasses import dataclass
 class Frame:
     center: float
     fit_params: tuple
-    x_data: np.ndarray
+    x: np.ndarray
     OP: np.ndarray
     Pol: np.ndarray
 
-    def apply_window(self, bounds):
-        low, high = bounds
-        cond = (self.x_data >= low) & (self.x_data < high)
-        ids = np.where(cond)[0]
-        return Frame( center=self.center, fit_params=self.fit_params, x_data=self.x_data[ids].copy(), OP=self.OP[ids].copy(), Pol=self.Pol[ids].copy())
+    def center_data(self):
+        def rotate_array(array : np.ndarray, center_id):
+            offset = (self.x.shape[0] // 2) - center_id
+
+            if offset < 0: # take top, append bottom
+                splits = np.vsplit(array, [np.abs(offset)])
+                return np.vstack((splits[1],splits[0]))
+
+            elif offset > 0: # take bottom, append top
+                splits = np.vsplit(array, [self.x.shape[0] - offset])
+                return np.vstack((splits[1], splits[0]))
+
+            return array
+
+        center_id = (np.abs(self.x - self.center)).argmin()
+
+        self.OP = rotate_array(self.OP, center_id)
+        self.Pol = rotate_array(self.Pol, center_id)
+        self.x -= self.center
+        return
+
+    def save_to_txt(self, save_dir, filename):
+        data = np.empty((self.x.shape[0], 7))
+        data[:,0] = self.x
+        data[:,1:4] = self.OP
+        data[:,4:] = self.Pol
+        np.savetxt(save_dir + filename, data, header=f"a={self.fit_params[0]}, b={self.fit_params[1]}, c={self.fit_params[2]}, xi={self.fit_params[3]}")
+        return
     
 @dataclass(slots=True)
 class BlockAvg: 
-    x_data: np.ndarray
+    x: np.ndarray
     OP: np.ndarray
     Pol: np.ndarray
 
@@ -31,17 +54,17 @@ class BlockAvg:
         if not isinstance(other, (Frame, BlockAvg)):
             raise NotImplemented
 
-        return BlockAvg(self.x_data + other.x_data, self.OP + other.OP, self.Pol + other.Pol)
+        return BlockAvg(self.x + other.x, self.OP + other.OP, self.Pol + other.Pol)
 
     def __truediv__(self, other):
         if not isinstance(other, (int, float)):
             raise NotImplemented
 
-        return BlockAvg(self.x_data / other, self.OP / other, self.Pol / other)
+        return BlockAvg(self.x / other, self.OP / other, self.Pol / other)
 
     def save_to_txt(self, save_dir, filename):
-        data = np.empty((self.x_data.shape[0], 7))
-        data[:,0] = self.x_data
+        data = np.empty((self.x.shape[0], 7))
+        data[:,0] = self.x
         data[:,1:4] = self.OP
         data[:,4:] = self.Pol
         np.savetxt(save_dir + filename, data)
@@ -53,6 +76,7 @@ def tanh(x, a, b, c, xi):
 def fit_frames(
     OP_frames_path,
     Pol_frames_path,
+    window,
     frame_indices=None,          # if given, ignores start/stop/step
     start=200,                   # inclusive
     stop=None,                   # exclusive (required if frame_indices is None)
@@ -105,6 +129,8 @@ def fit_frames(
 
         data_op = np.loadtxt(fpath_op)
         data_pol = np.loadtxt(fpath_pol)
+        data_op = data_op[window:-window, :]
+        data_pol = data_pol[window:-window, :]
         x = data_op[:, 0]
         y = data_op[:, 3]
 
@@ -117,10 +143,12 @@ def fit_frames(
         rmse = float(np.sqrt(np.mean((yfit_on_x - y)**2)))
 
         # build frames
-        res = root(lambda x: tanh(x, *opt), 150)
-        frame = Frame(res.x[0], opt, data_op[:, 0], data_op[:, 1:4], data_pol[:, 1:4])
+        #res = root(lambda x: tanh(x, *opt), 150)
+        frame = Frame(-1*opt[1], opt, data_op[:, 0], data_op[:, 1:4], data_pol[:, 1:4])
+        frame.save_to_txt("res/frames/", f"frame{i}.dat")
         frames.append(frame)
 
+        # plot
         if plot and save_dir is not None:
             xf = np.linspace(x.min(), x.max(), 800)
             plt.figure()
@@ -150,53 +178,62 @@ def fit_frames(
 
     return frames, results
 
-def _get_window_bounds(window_size, DW_center):
-    c = float(DW_center)
-    half = window_size / 2.0
-    return (c - half, c + half)
-
-def _get_windowed_data(frame, window_size):
-    bounds = _get_window_bounds(window_size, frame.center)
-    return frame.apply_window(bounds)
-
-def block_avg(frames, num_blocks : int, window_size : float, save_dir="./res/blocks/"):
+def block_avg(frames, num_blocks : int, save_dir="./res/"):
     if (len(frames) % num_blocks) != 0:
         raise RuntimeError("Block size does not match frame size")
     
     block_size = len(frames) // num_blocks
 
     blocks = []
-    for block_start in tqdm(range(0, len(frames), block_size), desc="Processing Block:"):
-        cur_frame = _get_windowed_data(frames[block_start], window_size)
-        block = BlockAvg(cur_frame.x_data, cur_frame.OP, cur_frame.Pol) 
+    centers = []
+    for block_start_id in tqdm(range(0, len(frames), block_size), desc="Processing Block:"):
+        block = BlockAvg(np.zeros(frames[0].x.shape), np.zeros(frames[0].OP.shape), np.zeros(frames[0].Pol.shape))
 
-        for block_frame in range(block_start+1, block_start+block_size):
-            cur_frame = _get_windowed_data(frames[block_frame], window_size)
-            block += cur_frame
+        for block_frame_id in range(block_start_id, block_start_id+block_size):
+            frames[block_frame_id].center_data()
+            block += frames[block_frame_id]
+            centers.append(frames[block_frame_id].center)
 
         block /= block_size
         blocks.append(block)
-        block.save_to_txt(save_dir, filename=f"block{len(blocks)}.dat")
+        block.save_to_txt(save_dir+"blocks/", filename=f"block{len(blocks)}.dat")
+
+    np.savetxt(save_dir + "centers.dat", np.array(centers))
 
     block_avg = blocks[0]
     for i in range(1, len(blocks)):
         block_avg += blocks[i]
 
     block_avg /= len(blocks)
-    block_avg.save_to_txt(save_dir, "block_avg.dat")
+    block_avg.save_to_txt(save_dir, "block_avg_40.dat")
     return block_avg
 
 # def auto_corr_func():
 
+#def load_frames(save_dir = "res/frames/"):
+#    frames = []
+#    data : np.ndarray
+#    for i in range(start, stop):
+#        data = np.loadtxt(save_dir+f"frame{i}.dat")
+#        data[:,1:4] = self.OP
+#        data[:,4:7] = self.Pol
+#        data[:,7:] = self.fit_params
+#        frames.append(Frame(data[:,0],))
+#    return
+
 def main():
+    start = 3000
+    stop = 5600
+
     frames, _ = fit_frames(
-        OP_frames_path="../STOTools/example/OP/OP_T20_p80/",
-        Pol_frames_path="../STOTools/example/POL/POL_T20_p80/",
-        start=8801, stop=9101,
+        OP_frames_path="../STOTools/example/OP/OP_T40_p80/",
+        Pol_frames_path="../STOTools/example/POL/POL_T40_p80/",
+        window = 25,
+        start=start, stop=stop,
         plot=True
     )
 
-    #block = block_avg(frames, 20, 110.5)
+    block = block_avg(frames, 100)
 
 if __name__ == "__main__":
     main()
