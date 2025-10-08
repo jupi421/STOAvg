@@ -76,7 +76,7 @@ def tanh(x, a, b, c, xi):
 def fit_frames(
     OP_frames_path,
     Pol_frames_path,
-    window,
+    cut,
     frame_indices=None,          # if given, ignores start/stop/step
     start=200,                   # inclusive
     stop=None,                   # exclusive (required if frame_indices is None)
@@ -129,8 +129,8 @@ def fit_frames(
 
         data_op = np.loadtxt(fpath_op)
         data_pol = np.loadtxt(fpath_pol)
-        x = data_op[window:-window, 0]
-        y = data_op[window:-window, 3]
+        x = data_op[cut[0]:-cut[1], 0]
+        y = data_op[cut[0]:-cut[1], 3]
 
         idx = np.argsort(x)
         x, y = x[idx], y[idx]
@@ -220,18 +220,18 @@ def block_avg(frames, num_blocks : int, save_dir="./res/"):
 #    return
 
 def main():
-    start = 3000
-    stop = 5600
+    start = 0
+    stop = 2400
 
     frames, _ = fit_frames(
-        OP_frames_path="../STOTools/example/OP/OP_T40_p80/",
-        Pol_frames_path="../STOTools/example/POL/POL_T40_p80/",
-        window = 25,
+        OP_frames_path="../STOTools/example/OP/OP_T40_p80_dt1/",
+        Pol_frames_path="../STOTools/example/POL/POL_T40_p80_dt1/",
+        cut = (25, 15),
         start=start, stop=stop,
         plot=True
     )
 
-    block = block_avg(frames, 100)
+    block = block_avg(frames, 50)
 
 if __name__ == "__main__":
     main()
